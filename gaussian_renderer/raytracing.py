@@ -61,7 +61,7 @@ class BRDFRenderer:
         # get indirect light (occ == 1)
         # indirect_lights = self.color_recursive(hit_to[occ==1], -incid_rays[occ==1], steps-1) 
         # just get SH color of gaussians for now 
-        shs = self.splats.get_features[rays_from]
+        shs = self.splats.get_ind_features[rays_from]
         shs = shs.transpose(1,2).view(-1,3,(self.splats.max_sh_degree+1)**2) # [n][3][16]
         count = occ.view(-1,self.S).sum(dim=1)
         shs = shs.repeat_interleave(count, dim=0) # [ind][3][16]
@@ -120,10 +120,10 @@ class Sampler:
         view = rays_d[:,None,:]
         normal = self.splats.get_normal[rays_from][:,None,:]
         rotate = build_rotation(self.splats.get_rotation[rays_from])
-        NoV = (normal @ view.transpose(-1,-2))+1e-6 # [n][1][1]
-        normal = normal * NoV.sign()
-        rotate = rotate * NoV.sign()
-        NoV = NoV * NoV.sign()
+        #NoV = (normal @ view.transpose(-1,-2))+1e-6 # [n][1][1]
+        #normal = normal #* NoV.sign()
+        #rotate = rotate #* NoV.sign()
+        #NoV = NoV #* NoV.sign()
 
         light = self.importanceSampleCosine(self.Xid, rotate)
 
@@ -169,9 +169,9 @@ class Sampler:
         normal = self.splats.get_normal[rays_from][:,None,:]          # [n][1][3]
         rotate = build_rotation(self.splats.get_rotation[rays_from])  # [n][3][3]
         NoV = (normal @ view.transpose(-1,-2))+1e-6                   # [n][1][1]
-        normal = normal * NoV.sign()
-        rotate = rotate * NoV.sign()
-        NoV = NoV * NoV.sign()
+        #normal = normal * NoV.sign()
+        #rotate = rotate * NoV.sign()
+        #NoV = NoV * NoV.sign()
 
         half = self.importanceSampleGGX(self.Xis, rough, rotate)      # [n][S][3]
         VoH = (view @ half.transpose(-1,-2)).transpose(-1,-2)         # [n][S][1]
@@ -179,7 +179,7 @@ class Sampler:
         NoL = (normal @ light.transpose(-1,-2)).transpose(-1,-2)      # [n][S][1]
         NoH = (normal @ half.transpose(-1,-2)).transpose(-1,-2)       # [n][S][1]
         mask = torch.logical_or(NoL<=0, NoV<=0)                       # [n][S][1]
-        assert torch.all(NoV>=0)
+        #assert torch.all(NoV>=0)
 
         # compute coefficients (BRDF/pdf)
         NoV = NoV.clamp(1e-6,1)
