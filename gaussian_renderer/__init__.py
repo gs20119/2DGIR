@@ -99,7 +99,6 @@ def render(viewpoint_camera, pc:GaussianModel, renderer:BRDFRenderer, pipe, bg_c
     dir_pp = (viewpoint_camera.camera_center[None,:] - pc.get_xyz) # outgoing lights direction
     dir_pp = dir_pp / dir_pp.norm(dim=1, keepdim=True) # [n][3]
     colors_precomp = renderer.color_recursive(torch.arange(n).cuda(), dir_pp)
-    print(colors_precomp.min().item(), colors_precomp.max().item())
     shs = None
     
     rendered_image, radii, allmap = rasterizer(
@@ -114,8 +113,7 @@ def render(viewpoint_camera, pc:GaussianModel, renderer:BRDFRenderer, pipe, bg_c
     )
     print("RENDERED!!!")
     gamma = pc.get_gamma
-    rendered_image = rendered_image[:3].clamp(min=1e-9)**gamma # HDR -> SDR tone mapping
-    print(rendered_image[:,100,100])
+    rendered_image = (rendered_image[:3].clamp(min=1e-9))**gamma # HDR -> SDR tone mapping
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.

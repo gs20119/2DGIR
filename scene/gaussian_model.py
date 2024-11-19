@@ -148,6 +148,8 @@ class GaussianModel:
         features[:, 3:, 1:] = 0.0
         materials = torch.zeros((fused_color.shape[0], 5)).float().cuda()
         materials[:,:3] = fused_color
+        materials[:,3] = torch.rand((fused_color.shape[0]))
+        materials[:,4] = torch.rand((fused_color.shape[0]))
 
         print("Number of points at initialisation : ", fused_point_cloud.shape[0])
 

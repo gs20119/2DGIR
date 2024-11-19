@@ -34,7 +34,7 @@ class RayTracer:
         iters = 0
         # ray voxel occlusion test
         while not torch.all(end):
-            # iters += 1
+            iters += 1
             # print(f"ITER {iters}: {torch.sum(end).item()} / {end.shape[0]}")
             argtMin = tHit.argmin(dim=1) # [n]
             for i in range(3):           # update blocks
@@ -43,7 +43,7 @@ class RayTracer:
                 ))
             end = tor(end, self.get_voxel_oor(blocks))
             idx = self.get_voxel_idx(blocks)
-            occ = torch.where(end, occ, self.voxel_grid[idx]) # occlusion check
+            if iters > 0: occ = torch.where(end, occ, self.voxel_grid[idx]) # occlusion check
             end = tor(end, occ)
             for i in range(3):           # update tHit
                 tHit[:,i] = torch.where(end, tHit[:,i], torch.where(

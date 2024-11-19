@@ -39,7 +39,7 @@ class BRDFRenderer:
         
         print("A")
         # sample incident rays (direction)
-        inrays_diff, coef_diff, mip_diff = self.sampler.sample_diffuse(rays_from)
+        inrays_diff, coef_diff, mip_diff = self.sampler.sample_diffuse(rays_from, rays_d)
         inrays_spec, coef_spec, mip_spec = self.sampler.sample_specular(rays_from, rays_d)
         incid_rays = torch.concatenate((inrays_diff, inrays_spec), dim=1) # [n][S][3]
         mip_levels = torch.concatenate((mip_diff, mip_spec), dim=1) # [n][S]
@@ -67,6 +67,7 @@ class BRDFRenderer:
         shs = shs.repeat_interleave(count, dim=0) # [ind][3][16]
         sh2rgb = eval_sh(self.splats.active_sh_degree, shs, incid_rays[occ==1])
         indirect_lights = torch.clamp_min(sh2rgb+0.5, 1e-9) # from the original code, but why?
+        print("MAXXX", indirect_lights.max().item())
         #print("INDIRECT: ", indirect_lights.max().item(), indirect_lights.min().item())
 
         print("E")
@@ -85,6 +86,7 @@ class BRDFRenderer:
         out_lights = color_diff + color_spec # [n][3]
         
         print("F")
+        print("occ vs not occ", occ.sum().item(), (~occ).sum().item())
         return out_lights
 
 
@@ -95,6 +97,7 @@ class Sampler:
         self.Xid = torch.tensor([[i/Sd, van_der_corput_bitwise(i)] for i in range(Sd)]).cuda()
         self.Xis = torch.tensor([[i/Ss, van_der_corput_bitwise(i)] for i in range(Ss)]).cuda()
     
+    @torch.no_grad
     def importanceSampleCosine(self, Xi, rotate): 
         theta = 2.0 * math.pi * Xi[:,0] # [S]
         sinPhi = torch.sqrt(Xi[:,1])
@@ -105,7 +108,7 @@ class Sampler:
         samples = torch.matmul(rotate[:,None,:,:], samples[None,:,:,None]).squeeze(-1)
         return samples # [n][S][3]
 
-    def sample_diffuse(self, rays_from): # importance sampling from cos-weight
+    def sample_diffuse(self, rays_from, rays_d): # importance sampling from cos-weight
         n = rays_from.shape[0]
         S = self.Xid.shape[0]
         
@@ -114,8 +117,14 @@ class Sampler:
         base, rough, metal = material[:,:3], material[:,3], material[:,4]
         
         # compute vectors  
+        view = rays_d[:,None,:]
         normal = self.splats.get_normal[rays_from][:,None,:]
         rotate = build_rotation(self.splats.get_rotation[rays_from])
+        NoV = (normal @ view.transpose(-1,-2))+1e-6 # [n][1][1]
+        normal = normal * NoV.sign()
+        rotate = rotate * NoV.sign()
+        NoV = NoV * NoV.sign()
+
         light = self.importanceSampleCosine(self.Xid, rotate)
 
         # compute coefficients
@@ -127,7 +136,7 @@ class Sampler:
 
         return light, coef, mip_levels # [n][S][3], [n][1][3], [n][S]
     
-
+    @torch.no_grad
     def importanceSampleGGX(self, Xi, roughness, rotate):
         a = roughness[:,None] ** 2 # [n][1]
         theta = 2.0 * math.pi * Xi[:,0] # phi = 0~pi/2 uniform sampling [S]
@@ -159,13 +168,18 @@ class Sampler:
         view = rays_d[:,None,:]                                       # [n][1][3]
         normal = self.splats.get_normal[rays_from][:,None,:]          # [n][1][3]
         rotate = build_rotation(self.splats.get_rotation[rays_from])  # [n][3][3]
+        NoV = (normal @ view.transpose(-1,-2))+1e-6                   # [n][1][1]
+        normal = normal * NoV.sign()
+        rotate = rotate * NoV.sign()
+        NoV = NoV * NoV.sign()
+
         half = self.importanceSampleGGX(self.Xis, rough, rotate)      # [n][S][3]
         VoH = (view @ half.transpose(-1,-2)).transpose(-1,-2)         # [n][S][1]
         light = 2*VoH*half-view                                       # [n][S][3]
-        NoV = (normal @ view.transpose(-1,-2))                        # [n][1][1]
         NoL = (normal @ light.transpose(-1,-2)).transpose(-1,-2)      # [n][S][1]
         NoH = (normal @ half.transpose(-1,-2)).transpose(-1,-2)       # [n][S][1]
         mask = torch.logical_or(NoL<=0, NoV<=0)                       # [n][S][1]
+        assert torch.all(NoV>=0)
 
         # compute coefficients (BRDF/pdf)
         NoV = NoV.clamp(1e-6,1)
