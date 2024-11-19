@@ -117,8 +117,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 imgname = f"iter{iteration}_"+viewpoint_cam.image_name + ".png"
                 torchvision.utils.save_image(image, os.path.join(render_temp_path, imgname))
                 torchvision.utils.save_image(gt_image, os.path.join(gt_temp_path, imgname))
+                print("ENVMAX: ", renderer.env.mipmap[0].max().item())
                 for i in range(6):
-                    torchvision.utils.save_image((renderer.env.mipmap[0][i] ** gaussians.get_gamma).clamp(0,0.5).permute(2,0,1), os.path.join(render_temp_path, f"iter{iteration}_envmap_{i}.png"))
+                    mip = renderer.env.mipmap[0][i]
+                    mip /= mip.max().item()
+                    torchvision.utils.save_image(mip.permute(2,0,1), os.path.join(render_temp_path, f"iter{iteration}_envmap_{i}.png"))
 
             if iteration % 10 == 0:
                 loss_dict = {
