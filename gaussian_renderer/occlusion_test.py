@@ -43,7 +43,7 @@ class RayTracer:
                 ))
             end = tor(end, self.get_voxel_oor(blocks))
             idx = self.get_voxel_idx(blocks)
-            if iters > 0: occ = torch.where(end, occ, self.voxel_grid[idx]) # occlusion check
+            if iters > 5: occ = torch.where(end, occ, self.voxel_grid[idx]) # occlusion check
             end = tor(end, occ)
             for i in range(3):           # update tHit
                 tHit[:,i] = torch.where(end, tHit[:,i], torch.where(
