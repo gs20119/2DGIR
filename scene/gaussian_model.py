@@ -49,7 +49,9 @@ class GaussianModel:
         self.max_sh_degree = sh_degree  
         self._xyz = torch.empty(0)
         self._features_dc = torch.empty(0)
-        self._features_rest = torch.empty(0) # SH features - indirect light estimation
+        self._features_rest = torch.empty(0) 
+        self._ind_features_dc = torch.empty(0) # SH features - indirect light estimation
+        self._ind_features_rest = torch.empty(0) # in future, this might be sub
         self._scaling = torch.empty(0)
         self._rotation = torch.empty(0)
         self._opacity = torch.empty(0)
@@ -69,6 +71,8 @@ class GaussianModel:
             self._xyz,
             self._features_dc,
             self._features_rest,
+            self._ind_features_dc,
+            self._ind_features_rest,
             self._scaling,
             self._rotation,
             self._opacity,
@@ -84,6 +88,8 @@ class GaussianModel:
         self._xyz, 
         self._features_dc, 
         self._features_rest,
+        self._ind_features_dc,
+        self._ind_features_rest,
         self._scaling, 
         self._rotation, 
         self._opacity,
@@ -113,6 +119,11 @@ class GaussianModel:
     def get_features(self): # features = gaussian colors
         features_dc = self._features_dc
         features_rest = self._features_rest
+        return torch.cat((features_dc, features_rest), dim=1)
+
+    def get_ind_features(self):
+        features_dc = self._ind_features_dc
+        features_rest = self._ind_features_rest
         return torch.cat((features_dc, features_rest), dim=1)
     
     @property
@@ -162,6 +173,8 @@ class GaussianModel:
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(features[:,:,1:].transpose(1, 2).contiguous().requires_grad_(True))
+        self._ind_features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
+        self._ind_features_rest = nn.Parameter(features[:,:,1:].transpose(1, 2).contiguous().requires_grad_(True))
         self._scaling = nn.Parameter(scales.requires_grad_(True))
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
@@ -181,6 +194,8 @@ class GaussianModel:
             {'params': [self._pbr_features], 'lr': training_args.feature_lr, "name": "material"},
             {'params': [self._features_dc], 'lr': training_args.feature_lr, "name": "f_dc"},
             {'params': [self._features_rest], 'lr': training_args.feature_lr / 20.0, "name": "f_rest"},
+            {'params': [self._ind_features_dc], 'lr': training_args.feature_lr, "name": "f_ind_dc"},
+            {'params': [self._ind_features_rest], 'lr': training_args.feature_lr / 20.0, "name": "f_ind_rest"},
             {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
             {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"}
@@ -214,6 +229,10 @@ class GaussianModel:
             l.append('f_dc_{}'.format(i))
         for i in range(self._features_rest.shape[1]*self._features_rest.shape[2]):
             l.append('f_rest_{}'.format(i))
+        for i in range(self._ind_features_dc.shape[1]*self._ind_features_dc.shape[2]):
+            l.append('f_ind_dc_{}'.format(i))
+        for i in range(self._ind_features_rest.shape[1]*self._ind_features_rest.shape[2]):
+            l.append('f_ind_rest_{}'.format(i))
         for i in range(self._pbr_features.shape[1]): # 5
             l.append('material_{}'.format(i)) # R, G, B, rough, metal
         l.append('opacity')
@@ -230,6 +249,8 @@ class GaussianModel:
         normals = np.zeros_like(xyz)
         f_dc = self._features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
         f_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        f_ind_dc = self._ind_features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        f_ind_rest = self._ind_features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
         materials = self._pbr_features.detach().cpu().numpy()
         opacities = self._opacity.detach().cpu().numpy()
         scale = self._scaling.detach().cpu().numpy()
@@ -296,6 +317,8 @@ class GaussianModel:
         self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
         self._features_dc = nn.Parameter(torch.tensor(features_dc, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(torch.tensor(features_extra, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
+        self._ind_features_dc = nn.Parameter(torch.tensor(features_dc, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
+        self._ind_features_rest = nn.Parameter(torch.tensor(features_extra, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
         self._pbr_features = nn.Parameter(torch.tensor(materials, dtype=torch.float, device="cuda").requires_grad_(True))
         self._opacity = nn.Parameter(torch.tensor(opacities, dtype=torch.float, device="cuda").requires_grad_(True))
         self._scaling = nn.Parameter(torch.tensor(scales, dtype=torch.float, device="cuda").requires_grad_(True))
@@ -348,6 +371,8 @@ class GaussianModel:
         self._xyz = optimizable_tensors["xyz"]
         self._features_dc = optimizable_tensors["f_dc"]
         self._features_rest = optimizable_tensors["f_rest"]
+        self._ind_features_dc = optimizable_tensors["f_ind_dc"]
+        self._ind_features_rest = optimizable_tensors["f_ind_rest"]
         self._pbr_features = optimizable_tensors["material"]
         self._opacity = optimizable_tensors["opacity"]
         self._scaling = optimizable_tensors["scaling"]
@@ -388,6 +413,8 @@ class GaussianModel:
         self._xyz = optimizable_tensors["xyz"]
         self._features_dc = optimizable_tensors["f_dc"]
         self._features_rest = optimizable_tensors["f_rest"]
+        self._ind_features_dc = optimizable_tensors["f_ind_dc"]
+        self._ind_features_rest = optimizable_tensors["f_ind_rest"]
         self._pbr_features = optimizable_tensors["material"]
         self._opacity = optimizable_tensors["opacity"]
         self._scaling = optimizable_tensors["scaling"]
@@ -420,6 +447,8 @@ class GaussianModel:
         new_tensor["material"]  = self._pbr_features[selected_pts_mask].repeat(N,1) 
         new_tensor["f_dc"] = self._features_dc[selected_pts_mask].repeat(N,1,1)
         new_tensor["f_rest"] = self._features_rest[selected_pts_mask].repeat(N,1,1)
+        new_tensor["f_ind_dc"] = self._ind_features_dc[selected_pts_mask].repeat(N,1,1)
+        new_tensor["f_ind_rest"] = self._ind_features_rest[selected_pts_mask].repeat(N,1,1)
 
         self.densification_postfix(new_tensor)
         prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
@@ -435,6 +464,8 @@ class GaussianModel:
         new_tensor["xyz"] = self._xyz[selected_pts_mask]            
         new_tensor["f_dc"] = self._features_dc[selected_pts_mask]
         new_tensor["f_rest"] = self._features_rest[selected_pts_mask]
+        new_tensor["f_ind_dc"] = self._ind_features_dc[selected_pts_mask]
+        new_tensor["f_ind_rest"] = self._ind_features_rest[selected_pts_mask]
         new_tensor["material"] = self._pbr_features[selected_pts_mask]
         new_tensor["opacity"] = self._opacity[selected_pts_mask]
         new_tensor["scaling"] = self._scaling[selected_pts_mask]

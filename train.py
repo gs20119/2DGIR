@@ -65,7 +65,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
     for iteration in range(first_iter, opt.iterations + 1):        
-        print(iteration)
+        
+        use_brdf = iteration > 15000
+        if use_brdf: print(iteration)
         iter_start.record()
 
         gaussians.update_learning_rate(iteration)
@@ -79,7 +81,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             viewpoint_stack = scene.getTrainCameras().copy()
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
         
-        render_pkg = render(viewpoint_cam, gaussians, renderer, pipe, background)
+        render_pkg = render(viewpoint_cam, gaussians, renderer, use_brdf, pipe, background)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         
         gt_image = viewpoint_cam.original_image.cuda()
@@ -117,8 +119,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 imgname = f"iter{iteration}_"+viewpoint_cam.image_name + ".png"
                 torchvision.utils.save_image(image, os.path.join(render_temp_path, imgname))
                 torchvision.utils.save_image(gt_image, os.path.join(gt_temp_path, imgname))
-                print("ENVMAX: ", renderer.env.mipmap[0].max().item())
-                for i in range(6):
+                if use_brdf: for i in range(6):
                     mip = renderer.env.mipmap[0][i]
                     mip /= mip.max().item()
                     torchvision.utils.save_image(mip.permute(2,0,1), os.path.join(render_temp_path, f"iter{iteration}_envmap_{i}.png"))
@@ -176,7 +177,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     net_image_bytes = None
                     custom_cam, do_training, keep_alive, scaling_modifer, render_mode = network_gui.receive()
                     if custom_cam != None:
-                        render_pkg = render(custom_cam, gaussians, scene.renderer, pipe, background, scaling_modifer)   
+                        render_pkg = render(custom_cam, gaussians, scene.renderer, use_brdf, pipe, background, scaling_modifer)   
                         net_image = render_net_image(render_pkg, dataset.render_items, render_mode, custom_cam)
                         net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
                     metrics_dict = {
