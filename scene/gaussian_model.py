@@ -121,6 +121,7 @@ class GaussianModel:
         features_rest = self._features_rest
         return torch.cat((features_dc, features_rest), dim=1)
 
+    @property
     def get_ind_features(self):
         features_dc = self._ind_features_dc
         features_rest = self._ind_features_rest
@@ -200,7 +201,7 @@ class GaussianModel:
             {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"}
         ]
-        self.prune_params_names=["xyz","f_dc", "f_rest", "material","opacity","scaling","rotation"]
+        self.prune_params_names=["xyz","f_dc", "f_rest", "f_ind_dc", "f_ind_rest", "material","opacity","scaling","rotation"]
 
         l.extend([{
             'params': self.gamma,

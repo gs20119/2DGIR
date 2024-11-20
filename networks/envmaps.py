@@ -20,6 +20,7 @@ class EnvMapGenerator:
             output = self.module.forward(self.input)
             res = self.resolution
             self.mipmap = [output.reshape(6, res, res, 3)]
+            print("ENVMAP: ", self.mipmap[0].min().item(), self.mipmap[0].max().item(), self.mipmap[0].mean().item())
             for i in range(1,levels):
                 self.extend_mipmap()
         return self.mipmap

@@ -17,7 +17,7 @@ from utils.sh_utils import eval_sh
 from utils.point_utils import depth_to_normal
 from gaussian_renderer.raytracing import BRDFRenderer
 
-def render(viewpoint_camera, pc:GaussianModel, renderer:BRDFRenderer, use_brdf=True, pipe, bg_color:torch.Tensor, scaling_modifier = 1.0, override_color = None):
+def render(viewpoint_camera, pc:GaussianModel, renderer:BRDFRenderer, use_brdf, pipe, bg_color:torch.Tensor, scaling_modifier = 1.0, override_color = None):
     """
     Render the scene. 
     
