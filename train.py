@@ -119,10 +119,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 imgname = f"iter{iteration}_"+viewpoint_cam.image_name + ".png"
                 torchvision.utils.save_image(image, os.path.join(render_temp_path, imgname))
                 torchvision.utils.save_image(gt_image, os.path.join(gt_temp_path, imgname))
-                if use_brdf: for i in range(6):
-                    mip = renderer.env.mipmap[0][i]
-                    mip /= mip.max().item()
-                    torchvision.utils.save_image(mip.permute(2,0,1), os.path.join(render_temp_path, f"iter{iteration}_envmap_{i}.png"))
+                if use_brdf: 
+                    for i in range(6):
+                        mip = renderer.env.mipmap[0][i]
+                        mip /= mip.max().item()
+                        torchvision.utils.save_image(mip.permute(2,0,1), os.path.join(render_temp_path, f"iter{iteration}_envmap_{i}.png"))
 
             if iteration % 10 == 0:
                 loss_dict = {
@@ -142,10 +143,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 tb_writer.add_scalar('train_loss_patches/dist_loss', ema_dist_for_log, iteration)
                 tb_writer.add_scalar('train_loss_patches/normal_loss', ema_normal_for_log, iteration)
 
-            training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
+            training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), use_brdf)
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
-                scene.save(iteration)
+                #scene.save(iteration)
 
 
             # Densification
@@ -164,6 +165,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if iteration < opt.iterations:
                 gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none = True)
+            
+            if use_brdf: 
+                renderer.optimizer.step()
+                renderer.optimizer.zero_grad(set_to_none = True)
 
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
@@ -216,7 +221,7 @@ def prepare_output_and_logger(args):
     return tb_writer
 
 @torch.no_grad()
-def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs):
+def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs, use_brdf):
     if tb_writer:
         tb_writer.add_scalar('train_loss_patches/reg_loss', Ll1.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
@@ -234,7 +239,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                 l1_test = 0.0
                 psnr_test = 0.0
                 for idx, viewpoint in enumerate(config['cameras']):
-                    render_pkg = renderFunc(viewpoint, scene.gaussians, scene.brdf_renderer, *renderArgs)
+                    render_pkg = renderFunc(viewpoint, scene.gaussians, scene.brdf_renderer, use_brdf, *renderArgs)
                     image = torch.clamp(render_pkg["render"], 0.0, 1.0)
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
                     if tb_writer and (idx < 5):
