@@ -16,7 +16,7 @@ from torch import nn
 import os
 from utils.system_utils import mkdir_p
 from plyfile import PlyData, PlyElement
-from utils.sh_utils import RGB2SH
+from utils.sh_utils import RGB2SH, SH2RGB
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
@@ -150,6 +150,12 @@ class GaussianModel:
     def oneupSHdegree(self):
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
+    
+    @torch.no_grad()
+    def reset_materials(self):
+        self._pbr_features[:,:3] = SH2RGB(self.get_features.transpose(1,2).contiguous()[:,:3,0])
+        self._ind_features_dc[:] = self._features_dc
+        self._ind_features_rest[:] = self._features_rest
 
     def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float):
         self.spatial_lr_scale = spatial_lr_scale
@@ -159,7 +165,7 @@ class GaussianModel:
         features[:, :3, 0 ] = fused_color
         features[:, 3:, 1:] = 0.0
         materials = torch.zeros((fused_color.shape[0], 5)).float().cuda()
-        materials[:,:3] = fused_color
+        materials[:,:3] = SH2RGB(fused_color)
         materials[:,3] = torch.rand((fused_color.shape[0]))
         materials[:,4] = torch.rand((fused_color.shape[0]))
 

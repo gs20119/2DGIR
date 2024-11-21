@@ -66,7 +66,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     first_iter += 1
     for iteration in range(first_iter, opt.iterations + 1):        
         
-        use_brdf = iteration > 15000
+        use_brdf = iteration > 5000
+        if iteration == 5000: gaussians.reset_materials() # TODO pass 
         if use_brdf: print(iteration)
         iter_start.record()
 
