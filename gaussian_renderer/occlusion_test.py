@@ -27,9 +27,12 @@ class RayTracer:
         step = rays_d.sign() # [n][3]
         blocks = self.voxelize(rays_o) # [n][3]
         tDelta = (2.0/res) / (rays_d+1e-9) # [n][3]
+        print("SHAPE", blocks.shape, step.shape, rays_o.shape, rays_d.shape)
         tHit = ((2.0/res)*(blocks+step)-rays_o) / (rays_d+1e-9)
-        end = torch.zeros(n, dtype=bool).cuda()
-        occ = torch.zeros(n, dtype=bool).cuda()
+        device = rays_o.get_device()
+        self.voxel_grid = self.voxel_grid.to(rays_o.device, non_blocking=True)
+        end = torch.zeros(n, dtype=bool).cuda(device)
+        occ = torch.zeros(n, dtype=bool).cuda(device)
 
         iters = 0
         # ray voxel occlusion test

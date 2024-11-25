@@ -49,7 +49,24 @@ class BRDFRenderer:
         incid_rays = incid_rays.reshape(-1,3) # [n*S][3]
         mip_levels = mip_levels.reshape(-1) # [n*S]
         rays_o = self.splats.get_xyz[rays_from].repeat_interleave(self.S,dim=0) # [n*S][3]
-        occ = self.tracer.occlusion_test(rays_o, incid_rays) # [n*S], hit_to [n*S]
+        
+        results = []
+        events = []
+        num_gpus = torch.cuda.device_count()
+        streams = [torch.cuda.Stream(device=i) for i in range(num_gpus)]
+        ro_split = split_tensor_gpus(rays_o, num_gpus)
+        rd_split = split_tensor_gpus(incid_rays, num_gpus)
+        for i in range(num_gpus):
+            with torch.cuda.device(i):
+                with torch.cuda.stream(streams[i]):
+                    result = self.tracer.occlusion_test(ro_split[i], rd_split[i]) # [n*S], hit_to [n*S]
+                    results.append(result)
+                    e = torch.cuda.Event()
+                    e.record()
+                    events.append(e)
+        
+        for e in events: e.synchronize()
+        occ = gather_tensors_gpus(results)
 
         print("C")
         # get direct light (occ == 0)
@@ -66,8 +83,7 @@ class BRDFRenderer:
         count = occ.view(-1,self.S).sum(dim=1)
         shs = shs.repeat_interleave(count, dim=0) # [ind][3][16]
         sh2rgb = eval_sh(self.splats.active_sh_degree, shs, incid_rays[occ==1])
-        indirect_lights = torch.clamp_min(sh2rgb+0.5, 1e-9) # from the original code, but why?
-        print("MAXXX", indirect_lights.max().item())
+        indirect_lights = torch.clamp_min(sh2rgb+0.5, 1e-9) 
         #print("INDIRECT: ", indirect_lights.max().item(), indirect_lights.min().item())
 
         print("E")
@@ -88,6 +104,15 @@ class BRDFRenderer:
         print("F")
         print("occ vs not occ", occ.sum().item(), (~occ).sum().item())
         return out_lights
+
+
+def split_tensor_gpus(x, num_gpus, dim=0):
+    chunks = torch.chunk(x, num_gpus, dim=dim)
+    return [chunk.cuda(i) for i, chunk in enumerate(chunks)]
+
+def gather_tensors_gpus(chunks, dim=0):
+    xs = [chunk.cuda(0) for chunk in chunks]
+    return torch.cat(xs, dim=dim)
 
 
 # sampling incident rays
