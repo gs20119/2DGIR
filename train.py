@@ -66,8 +66,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     first_iter += 1
     for iteration in range(first_iter, opt.iterations + 1):        
         
-        use_brdf = iteration > 5000
-        if iteration == 5000: gaussians.reset_materials() # TODO pass 
+        use_brdf = iteration > 1000
+        if iteration == 1000: gaussians.reset_materials() # TODO pass 
         if use_brdf: print(iteration)
         iter_start.record()
 
@@ -101,10 +101,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         dist_loss = lambda_dist * (rend_dist).mean()
 
         # additional regularization? (from NeRO)
-        
+        if use_brdf:
+            envmap_mean = renderer.env.mipmap[0].mean(dim=3, keepdim=True)
+            envmap_dev = torch.abs(renderer.env.mipmap[0] - envmap_mean)
+            env_loss = opt.lambda_envmap * (envmap_dev).mean()
+        else: env_loss = 0.0
 
         # loss
-        total_loss = loss + dist_loss + normal_loss
+        total_loss = loss + dist_loss + normal_loss + env_loss
         
         total_loss.backward()
 

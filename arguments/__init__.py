@@ -85,6 +85,7 @@ class OptimizationParams(ParamGroup):
         self.lambda_dssim = 0.2
         self.lambda_dist = 0.0
         self.lambda_normal = 0.05
+        self.lambda_envmap = 0.05
         self.opacity_cull = 0.05
 
         self.densification_interval = 100
