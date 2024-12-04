@@ -63,7 +63,7 @@ class ExpActivation(nn.Module):
 
 # Direct Light Modules
 class ViewOnlyNeRF(nn.Module): # from NeRO implementation
-    def __init__(self, input_dim=2, output_dim=3, run_dim=256, exp_max=5.0) -> object:
+    def __init__(self, input_dim=2, output_dim=3, run_dim=64, exp_max=5.0) -> object:
         super(ViewOnlyNeRF, self).__init__()
         self.dir_enc, dir_dim = get_embedder(6, input_dim) # need config for multires
         self.module = nn.Sequential(
