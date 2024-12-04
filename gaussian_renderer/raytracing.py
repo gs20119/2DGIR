@@ -8,6 +8,7 @@ from scene.gaussian_model import GaussianModel
 from networks.envmaps import EnvMapGenerator
 from utils.sh_utils import eval_sh
 from utils.general_utils import build_rotation
+import ray, os, time
 import math
 
 # Compute BRDF Rendering Equation (RayTracing + Importance Sampling)
@@ -19,7 +20,6 @@ class BRDFRenderer:
         self.S = self.Sd + self.Ss # of incident rays for a point
         self.splats = pc
         self.steps = 1
-        self.tracer = RayTracer(pc) # ray tracer 
         self.sampler = Sampler(pc, self.Sd, self.Ss) # ray sampler
         self.env = EnvMapGenerator() # environment lightmap
         self.lr_manager = WarmUpCosLR({
@@ -28,6 +28,12 @@ class BRDFRenderer:
             "lr_rate": 0.5,
         })
         self.optimizer = self.lr_manager.construct_optimizer(Adam, self.env.module)
+        
+        os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
+        ncpus, ngpus = 20, torch.cuda.device_count()
+        ray.init(num_cpus=ncpus, num_gpus=ngpus) 
+        self.tracers = [RayTracer.remote() for _ in range(ngpus)] 
+        self.ngpus = ngpus
 
     
     # return outgoing radiance along given rays
@@ -37,44 +43,43 @@ class BRDFRenderer:
         if steps == 0: # terminate recursion
             return None # return SH color of gaussians
         
-        print("A")
         # sample incident rays (direction)
         inrays_diff, coef_diff, mip_diff = self.sampler.sample_diffuse(rays_from, rays_d)
         inrays_spec, coef_spec, mip_spec = self.sampler.sample_specular(rays_from, rays_d)
         incid_rays = torch.concatenate((inrays_diff, inrays_spec), dim=1) # [n][S][3]
         mip_levels = torch.concatenate((mip_diff, mip_spec), dim=1) # [n][S]
 
-        print("B")
         # occlusion test
         incid_rays = incid_rays.reshape(-1,3) # [n*S][3]
         mip_levels = mip_levels.reshape(-1) # [n*S]
         rays_o = self.splats.get_xyz[rays_from].repeat_interleave(self.S,dim=0) # [n*S][3]
         
-        results = []
-        events = []
-        num_gpus = torch.cuda.device_count()
-        streams = [torch.cuda.Stream(device=i) for i in range(num_gpus)]
-        ro_split = split_tensor_gpus(rays_o, num_gpus)
-        rd_split = split_tensor_gpus(incid_rays, num_gpus)
-        for i in range(num_gpus):
-            with torch.cuda.device(i):
-                with torch.cuda.stream(streams[i]):
-                    result = self.tracer.occlusion_test(ro_split[i], rd_split[i]) # [n*S], hit_to [n*S]
-                    results.append(result)
-                    e = torch.cuda.Event()
-                    e.record()
-                    events.append(e)
-        
-        for e in events: e.synchronize()
+        # results = []
+        # events = []
+        # num_gpus = torch.cuda.device_count()
+        # streams = [torch.cuda.Stream(device=i) for i in range(1,num_gpus)]
+        st = time.time()
+        ro_split = split_tensor_gpus(rays_o, self.ngpus)
+        rd_split = split_tensor_gpus(incid_rays, self.ngpus)
+        xyz = self.splats.get_xyz.cpu().detach().numpy()
+        end = time.time()
+
+        remotes = [
+            tracer.occlusion_test.remote(ro_split[i-1], rd_split[i-1], xyz) 
+            for i, tracer in enumerate(self.tracers)
+        ]
+
+        st = time.time()
+        results = ray.get(remotes)
+        end = time.time()
+        print("OCC_TEST:", end-st)
+
         occ = gather_tensors_gpus(results)
 
-        print("C")
         # get direct light (occ == 0)
         self.env.get_maps(update=True)
         direct_lights = self.env.get_direct(rays_o[occ==0], incid_rays[occ==0], mip_levels[occ==0])
-        #print("DIRECT: ", direct_lights.max().item(), direct_lights.min().item())
 
-        print("D")
         # get indirect light (occ == 1)
         # indirect_lights = self.color_recursive(hit_to[occ==1], -incid_rays[occ==1], steps-1) 
         # just get SH color of gaussians for now 
@@ -84,31 +89,23 @@ class BRDFRenderer:
         shs = shs.repeat_interleave(count, dim=0) # [ind][3][16]
         sh2rgb = eval_sh(self.splats.active_sh_degree, shs, incid_rays[occ==1])
         indirect_lights = torch.clamp_min(sh2rgb+0.5, 1e-9) 
-        #print("INDIRECT: ", indirect_lights.max().item(), indirect_lights.min().item())
 
-        print("E")
         # compute integrals
         incid_lights = torch.zeros_like(incid_rays).cuda() # [n*S][3]
-        
         incid_lights[~occ] = direct_lights
         incid_lights[occ] = indirect_lights
         incid_lights = incid_lights.reshape(-1, self.S, 3) # [n][S][3]
-        # print("INCIDENT: ", incid_lights.max().item(), incid_lights.min().item())
-        # print("COEF: ", coef_diff.min().item(), coef_diff.max().item())
-        # print("COEF: ", coef_spec.min().item(), coef_spec.max().item())
 
         color_diff = (incid_lights[:,:self.Sd,:]*coef_diff).mean(dim=1)
         color_spec = (incid_lights[:,self.Sd:,:]*coef_spec).mean(dim=1)
         out_lights = color_diff + color_spec # [n][3]
-        
-        print("F")
-        print("occ vs not occ", occ.sum().item(), (~occ).sum().item())
+
         return out_lights
 
 
 def split_tensor_gpus(x, num_gpus, dim=0):
     chunks = torch.chunk(x, num_gpus, dim=dim)
-    return [chunk.cuda(i) for i, chunk in enumerate(chunks)]
+    return [chunk.cpu().detach().numpy() for i, chunk in enumerate(chunks)]
 
 def gather_tensors_gpus(chunks, dim=0):
     xs = [chunk.cuda(0) for chunk in chunks]
@@ -145,10 +142,6 @@ class Sampler:
         view = rays_d[:,None,:]
         normal = self.splats.get_normal[rays_from][:,None,:]
         rotate = build_rotation(self.splats.get_rotation[rays_from])
-        #NoV = (normal @ view.transpose(-1,-2))+1e-6 # [n][1][1]
-        #normal = normal #* NoV.sign()
-        #rotate = rotate #* NoV.sign()
-        #NoV = NoV #* NoV.sign()
 
         light = self.importanceSampleCosine(self.Xid, rotate)
 
@@ -194,9 +187,6 @@ class Sampler:
         normal = self.splats.get_normal[rays_from][:,None,:]          # [n][1][3]
         rotate = build_rotation(self.splats.get_rotation[rays_from])  # [n][3][3]
         NoV = (normal @ view.transpose(-1,-2))+1e-6                   # [n][1][1]
-        #normal = normal * NoV.sign()
-        #rotate = rotate * NoV.sign()
-        #NoV = NoV * NoV.sign()
 
         half = self.importanceSampleGGX(self.Xis, rough, rotate)      # [n][S][3]
         VoH = (view @ half.transpose(-1,-2)).transpose(-1,-2)         # [n][S][1]
