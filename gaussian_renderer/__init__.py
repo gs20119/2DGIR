@@ -78,23 +78,6 @@ def render(viewpoint_camera, pc:GaussianModel, renderer:BRDFRenderer, use_brdf, 
         scales = pc.get_scaling
         rotations = pc.get_rotation
     
-    # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
-    # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
-    # pipe.convert_SHs_python = False
-    # shs = None
-    # colors_precomp = None
-    # if override_color is None:
-    #     if pipe.convert_SHs_python:
-    #         shs_view = pc.get_features.transpose(1, 2).view(-1, 3, (pc.max_sh_degree+1)**2)
-    #         dir_pp = (pc.get_xyz - viewpoint_camera.camera_center.repeat(pc.get_features.shape[0], 1))
-    #         dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
-    #         sh2rgb = eval_sh(pc.active_sh_degree, shs_view, dir_pp_normalized)
-    #         colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
-    #     else:
-    #         shs = pc.get_features
-    # else:
-    #     colors_precomp = override_color
-    
     n = pc.get_xyz.shape[0]
     dir_pp = (viewpoint_camera.camera_center[None,:] - pc.get_xyz) # outgoing lights direction
     dir_pp = dir_pp / dir_pp.norm(dim=1, keepdim=True) # [n][3]
@@ -123,9 +106,6 @@ def render(viewpoint_camera, pc:GaussianModel, renderer:BRDFRenderer, use_brdf, 
     # They will be excluded from value updates used in the splitting criteria.
     rets = {
         "render": rendered_image, # [3,H,W]
-        #"render_base": rendered_images[3:6], # [3,H,W]
-        #"render_rough": rendered_images[6:7], # [1,H,W]
-        #"render_metal": rendered_images[7:8], # [1,H,W]
         "viewspace_points": means2D,
         "visibility_filter": radii > 0,
         "radii": radii}  
@@ -172,4 +152,37 @@ def render(viewpoint_camera, pc:GaussianModel, renderer:BRDFRenderer, use_brdf, 
             'surf_normal': surf_normal,
     })
 
+
+    if use_brdf:
+        with torch.no_grad():
+            material = pc.get_material
+            rendered_base, _, __ = rasterizer(
+                means3D = means3D,
+                means2D = means2D,
+                shs = None,
+                colors_precomp = material[:,:3],
+                opacities = opacity,
+                scales = scales,
+                rotations = rotations,
+                cov3D_precomp = cov3D_precomp
+            )
+            rough = material[:,3] # roughness
+            metal = material[:,4] # metal
+            empty = torch.zeros_like(rough)
+            rendered_rm, _, __ = rasterizer(
+                means3D = means3D,
+                means2D = means2D,
+                shs = None,
+                colors_precomp = torch.stack([rough, empty, metal], dim=1),
+                opacities = opacity,
+                scales = scales,
+                rotations = rotations,
+                cov3D_precomp = cov3D_precomp
+            )
+            rets.update({
+                'render_base': rendered_base,
+                'render_rm': rendered_rm,
+            })
+
+    torch.cuda.empty_cache()
     return rets
