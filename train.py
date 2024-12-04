@@ -23,6 +23,8 @@ from tqdm import tqdm
 from utils.image_utils import psnr, render_net_image
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+from kornia.filters import laplacian, spatial_gradient
+import time
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -66,8 +68,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     first_iter += 1
     for iteration in range(first_iter, opt.iterations + 1):        
         
-        use_brdf = iteration > 1000
-        if iteration == 1000: gaussians.reset_materials() # TODO pass 
+        use_brdf = iteration > 10000
+        if iteration == 10000: gaussians.reset_materials()
         if use_brdf: print(iteration)
         iter_start.record()
 
@@ -105,12 +107,31 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             envmap_mean = renderer.env.mipmap[0].mean(dim=3, keepdim=True)
             envmap_dev = torch.abs(renderer.env.mipmap[0] - envmap_mean)
             env_loss = opt.lambda_envmap * (envmap_dev).mean()
-        else: env_loss = 0.0
+            
+            image_base = render_pkg["render_base"]
+            image_rm = render_pkg["render_rm"] 
+
+            grad_rm = spatial_gradient(image_rm[None], order=1)[0] # [3,2,H,W]
+            grad_base = spatial_gradient(image_base[None], order=1)[0] # [3,2,H,W]
+            grad_gt = spatial_gradient(gt_image[None], order=1)[0] # [3,2,H,W]
+            #grad_gt = spatial_gradient(gt_image[None], order=2)[0,:,[0,2]] # [3,2,H,W] (2nd grad)
+
+            rm_smooth = opt.lambda_smooth_rm * (grad_rm.abs() * torch.exp(-grad_gt.norm(dim=0, keepdim=True))).mean()
+            base_smooth = opt.lambda_smooth_b * (grad_base.abs() * torch.exp(-grad_gt.norm(dim=0, keepdim=True))).mean()
+            #base_smooth = opt.lambda_smooth_b * (grad_base.abs() * torch.exp(-grad_gt.abs())).mean()
+
+            smooth_loss = rm_smooth + base_smooth
+        else: 
+            env_loss = 0.0
+            smooth_loss = 0.0
 
         # loss
-        total_loss = loss + dist_loss + normal_loss + env_loss
+        total_loss = loss + dist_loss + normal_loss + env_loss + smooth_loss
         
+        st = time.time()
         total_loss.backward()
+        end = time.time()
+        print("BACKWARD:", end-st)
 
         iter_end.record()
 
@@ -129,6 +150,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                         mip = renderer.env.mipmap[0][i]
                         mip /= mip.max().item()
                         torchvision.utils.save_image(mip.permute(2,0,1), os.path.join(render_temp_path, f"iter{iteration}_envmap_{i}.png"))
+                    render_base, render_rm = render_pkg["render_base"], render_pkg["render_rm"]
+                    torchvision.utils.save_image(render_base, os.path.join(render_temp_path, f"iter{iteration}_base_{i}.png"))
+                    torchvision.utils.save_image(render_rm, os.path.join(render_temp_path, f"iter{iteration}_rm_{i}.png"))
 
             if iteration % 10 == 0:
                 loss_dict = {
