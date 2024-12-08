@@ -63,6 +63,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     ema_loss_for_log = 0.0
     ema_dist_for_log = 0.0
     ema_normal_for_log = 0.0
+    ema_envmap_for_log = 0.0
+    ema_smooth_for_log = 0.0
 
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
@@ -84,10 +86,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             viewpoint_stack = scene.getTrainCameras().copy()
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
         
+        background = torch.rand(3, dtype=torch.float32).cuda() # randomize background
         render_pkg = render(viewpoint_cam, gaussians, renderer, use_brdf, pipe, background)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         
-        gt_image = viewpoint_cam.original_image.cuda()
+        gt_image = viewpoint_cam.original_image
+        mask = viewpoint_cam.image_mask
+        gt_image = gt_image*mask[None] + background[:,None,None]*(1.0-mask[None])
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         
@@ -131,7 +136,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         st = time.time()
         total_loss.backward()
         end = time.time()
-        print("BACKWARD:", end-st)
 
         iter_end.record()
 
@@ -140,6 +144,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
             ema_dist_for_log = 0.4 * dist_loss.item() + 0.6 * ema_dist_for_log
             ema_normal_for_log = 0.4 * normal_loss.item() + 0.6 * ema_normal_for_log
+            ema_envmap_for_log = 0.4 * env_loss.item() + 0.6 * ema_env_for_log
+            ema_smooth_for_log = 0.4 * smooth_loss.item() + 0.6 * ema_smooth_for_log
 
             if (iteration%1000==0) or (iteration==1):
                 imgname = f"iter{iteration}_"+viewpoint_cam.image_name + ".png"
@@ -159,6 +165,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     "Loss": f"{ema_loss_for_log:.{5}f}",
                     "distort": f"{ema_dist_for_log:.{5}f}",
                     "normal": f"{ema_normal_for_log:.{5}f}",
+                    "envmap": f"{ema_env_for_log:.{5}f}",
+                    "smooth": f"{ema_smooth_for_log:.{5}f}",
                     "Points": f"{len(gaussians.get_xyz)}"
                 }
                 progress_bar.set_postfix(loss_dict)

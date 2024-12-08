@@ -36,6 +36,7 @@ class CameraInfo(NamedTuple):
     image_name: str
     width: int
     height: int
+    mask: np.array
 
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
@@ -287,14 +288,16 @@ def readCamerasFromPickles(path, white_background, extension=".png"):
         bg = np.array([1,1,1]) if white_background else np.array([0, 0, 0])
 
         norm_data = im_data / 255.0
-        arr = norm_data[:,:,:3] * norm_data[:,:,3:4] * mask + bg * (1-norm_data[:, :, 3:4])
+        arr = norm_data[:,:,:3] * norm_data[:,:,3:4] * mask + bg * (1-norm_data[:, :, 3:4]) * (1-mask)
         image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
+        mask = mask.squeeze()
 
         FovX = 2.0*math.atan(image.size[0]/(2*K[0,0]))
         FovY = 2.0*math.atan(image.size[1]/(2*K[1,1]))
         
-        cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                            image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1]))
+        cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, 
+                            image=image, image_path=image_path, image_name=image_name, 
+                            width=image.size[0], height=image.size[1], mask=mask))
 
     return cam_infos 
     

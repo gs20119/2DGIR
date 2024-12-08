@@ -198,7 +198,7 @@ class GaussianModel:
 
         l = [
             {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
-            {'params': [self._pbr_features], 'lr': training_args.feature_lr, "name": "material"},
+            {'params': [self._pbr_features], 'lr': training_args.material_lr, "name": "material"},
             {'params': [self._features_dc], 'lr': training_args.feature_lr, "name": "f_dc"},
             {'params': [self._features_rest], 'lr': training_args.feature_lr / 20.0, "name": "f_rest"},
             {'params': [self._ind_features_dc], 'lr': training_args.feature_lr, "name": "f_ind_dc"},
