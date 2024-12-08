@@ -127,8 +127,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             smooth_loss = rm_smooth + base_smooth
         else: 
-            env_loss = 0.0
-            smooth_loss = 0.0
+            env_loss = torch.zeros(1).float().cuda()
+            smooth_loss = torch.zeros(1).float().cuda()
 
         # loss
         total_loss = loss + dist_loss + normal_loss + env_loss + smooth_loss
@@ -144,7 +144,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
             ema_dist_for_log = 0.4 * dist_loss.item() + 0.6 * ema_dist_for_log
             ema_normal_for_log = 0.4 * normal_loss.item() + 0.6 * ema_normal_for_log
-            ema_envmap_for_log = 0.4 * env_loss.item() + 0.6 * ema_env_for_log
+            ema_envmap_for_log = 0.4 * env_loss.item() + 0.6 * ema_envmap_for_log
             ema_smooth_for_log = 0.4 * smooth_loss.item() + 0.6 * ema_smooth_for_log
 
             if (iteration%1000==0) or (iteration==1):
@@ -165,9 +165,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     "Loss": f"{ema_loss_for_log:.{5}f}",
                     "distort": f"{ema_dist_for_log:.{5}f}",
                     "normal": f"{ema_normal_for_log:.{5}f}",
-                    "envmap": f"{ema_env_for_log:.{5}f}",
+                    "envmap": f"{ema_envmap_for_log:.{5}f}",
                     "smooth": f"{ema_smooth_for_log:.{5}f}",
-                    "Points": f"{len(gaussians.get_xyz)}"
                 }
                 progress_bar.set_postfix(loss_dict)
 

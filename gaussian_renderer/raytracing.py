@@ -8,15 +8,16 @@ from scene.gaussian_model import GaussianModel
 from networks.envmaps import EnvMapGenerator
 from utils.sh_utils import eval_sh
 from utils.general_utils import build_rotation
+from arguments import ModelParams
 import ray, os, time
 import math
 
 # Compute BRDF Rendering Equation (RayTracing + Importance Sampling)
 class BRDFRenderer:
-    def __init__(self, pc:GaussianModel):
+    def __init__(self, pc:GaussianModel, args:ModelParams):
         # later, we will get these constants from cfg
-        self.Sd = 25 
-        self.Ss = 25
+        self.Sd = args.rays_diffuse
+        self.Ss = args.rays_specular
         self.S = self.Sd + self.Ss # of incident rays for a point
         self.splats = pc
         self.steps = 1

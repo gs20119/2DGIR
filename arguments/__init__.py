@@ -47,6 +47,8 @@ class ParamGroup:
 class ModelParams(ParamGroup): 
     def __init__(self, parser, sentinel=False):
         self.sh_degree = 3
+        self.rays_diffuse = 256
+        self.rays_specular = 128
         self._source_path = ""
         self._model_path = ""
         self._images = "images"
@@ -78,6 +80,7 @@ class OptimizationParams(ParamGroup):
         self.position_lr_delay_mult = 0.01
         self.position_lr_max_steps = 30_000
         self.feature_lr = 0.0025
+        self.material_lr = 0.05
         self.opacity_lr = 0.05
         self.scaling_lr = 0.005
         self.rotation_lr = 0.001
@@ -85,7 +88,7 @@ class OptimizationParams(ParamGroup):
         self.lambda_dssim = 0.2
         self.lambda_dist = 0.0
         self.lambda_normal = 0.05
-        self.lambda_envmap = 0.05
+        self.lambda_envmap = 0.001
         self.lambda_smooth_b = 0.05
         self.lambda_smooth_rm = 0.05
         self.opacity_cull = 0.05
