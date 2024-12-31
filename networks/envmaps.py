@@ -31,10 +31,10 @@ class EnvMapGenerator:
         xy = map_prev[:, ::2, 1::2, :]
         yx = map_prev[:, 1::2, ::2, :]
         yy = map_prev[:, 1::2, 1::2, :]
-        map_curr = (xx + xy + yx + yy) / 4
+        map_curr = (xx + xy + yx + yy) / 4.0
         self.mipmap.append(map_curr)
     
-    def get_direct(self, rays_o, rays_d, mip_level):
+    def get_direct(self, rays_o, rays_d, rays_om):
         n = rays_o.shape[0]
         tHit = (rays_d.sign()-rays_o) / (rays_d+1e-9) # [n][3]
         tMin = tHit.min(dim=1)
@@ -51,6 +51,10 @@ class EnvMapGenerator:
                 rays_end[:,[1,2]]
             )
         ).clamp(-1.0,1.0-1e-6)
+
+        # compute mip_level
+        mip_level = torch.zeros(n)
+        # TODO
         
         # for now, colors from grid without interpolation
         grid = ((coord+1)*(float(self.resolution)/(2.0**(mip_level[:,None]+1)))).long() # [n][2]

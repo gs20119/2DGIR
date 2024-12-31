@@ -45,20 +45,16 @@ class BRDFRenderer:
             return None # return SH color of gaussians
         
         # sample incident rays (direction)
-        inrays_diff, coef_diff, mip_diff = self.sampler.sample_diffuse(rays_from, rays_d)
-        inrays_spec, coef_spec, mip_spec = self.sampler.sample_specular(rays_from, rays_d)
+        inrays_diff, coef_diff, cone_diff = self.sampler.sample_diffuse(rays_from, rays_d)
+        inrays_spec, coef_spec, cone_spec = self.sampler.sample_specular(rays_from, rays_d)
         incid_rays = torch.concatenate((inrays_diff, inrays_spec), dim=1) # [n][S][3]
-        mip_levels = torch.concatenate((mip_diff, mip_spec), dim=1) # [n][S]
+        solid_angles = torch.concatenate((cone_diff, cone_spec), dim=1) # [n][S]
 
         # occlusion test
         incid_rays = incid_rays.reshape(-1,3) # [n*S][3]
-        mip_levels = mip_levels.reshape(-1) # [n*S]
+        solid_angles = solid_angles.reshape(-1) # [n*S]
         rays_o = self.splats.get_xyz[rays_from].repeat_interleave(self.S,dim=0) # [n*S][3]
         
-        # results = []
-        # events = []
-        # num_gpus = torch.cuda.device_count()
-        # streams = [torch.cuda.Stream(device=i) for i in range(1,num_gpus)]
         st = time.time()
         ro_split = split_tensor_gpus(rays_o, self.ngpus)
         rd_split = split_tensor_gpus(incid_rays, self.ngpus)
@@ -79,7 +75,7 @@ class BRDFRenderer:
 
         # get direct light (occ == 0)
         self.env.get_maps(update=True)
-        direct_lights = self.env.get_direct(rays_o[occ==0], incid_rays[occ==0], mip_levels[occ==0])
+        direct_lights = self.env.get_direct(rays_o[occ==0], incid_rays[occ==0], solid_angles[occ==0])
 
         # get indirect light (occ == 1)
         # indirect_lights = self.color_recursive(hit_to[occ==1], -incid_rays[occ==1], steps-1) 
@@ -141,20 +137,23 @@ class Sampler:
         
         # compute vectors  
         view = rays_d[:,None,:]
-        normal = self.splats.get_normal[rays_from][:,None,:]
+        normal = self.splats.get_normal[rays_from][:,None,:]          # [n][1][3]
         rotate = build_rotation(self.splats.get_rotation[rays_from])
 
-        light = self.importanceSampleCosine(self.Xid, rotate)
+        light = self.importanceSampleCosine(self.Xid, rotate)         # [n][S][3]
+        NoL = (normal @ light.transpose(-1,-2)).transpose(-1,-2)      # [n][S][1]
 
         # compute coefficients
-        coef = (1.0-metal[:,None])*base   # [n][3]
-        coef = coef[:,None,:]             # [n][1][3]
+        coef = (1.0-metal[:,None])*base                               # [n][3]
+        coef = coef[:,None,:]                                         # [n][1][3]
+        pdf = NoL / math.pi                                           # [n][S][1]
 
-        # compute mip levels
-        mip_levels = torch.zeros((n,S)).long().cuda()
+        # compute solid angles
+        cone_angles = (1.0 / (S*pdf)).squeeze()                       # [n][S]
 
-        return light, coef, mip_levels # [n][S][3], [n][1][3], [n][S]
+        return light, coef, cone_angles # [n][S][3], [n][1][3], [n][S]
     
+    # From Unreal Engine 4
     @torch.no_grad
     def importanceSampleGGX(self, Xi, roughness, rotate):
         a = roughness[:,None] ** 2 # [n][1]
@@ -168,11 +167,17 @@ class Sampler:
         samples = (rotate.unsqueeze(1) @ samples.unsqueeze(-1)).squeeze(-1)  # [n][3][3] x [n][S][3]
         return samples #[n][S][3]
 
+    def GGX(self, NoH):
+        a2 = roughness ** 4
+        a2 = a2[:,None,None] # [n][1][1]
+        return a2 / (math.pi * ((NoH**2)*(a2-1)+1)**2) # [n][S][1]
+        
+    # Smith term for GGX
     def gsmith(self, roughness, NoV, NoL):
-        a = roughness ** 2
-        a = a[:,None,None] # [n][1][1]
-        G_SmithV = NoV + torch.sqrt((1.0-a**2)*(NoV**2) + a**2)
-        G_SmithL = NoL + torch.sqrt((1.0-a**2)*(NoL**2) + a**2)
+        a2 = roughness ** 4
+        a2 = a2[:,None,None] # [n][1][1]
+        G_SmithV = NoV + torch.sqrt((1.0-a2)*(NoV**2) + a2)
+        G_SmithL = NoL + torch.sqrt((1.0-a2)*(NoL**2) + a2)
         return (4*NoV*NoL) / (G_SmithV*G_SmithL)
     
     def sample_specular(self, rays_from, rays_d): # importance sampling from GGX
@@ -202,17 +207,20 @@ class Sampler:
         NoL = NoL.clamp(1e-6,1)
         NoH = NoH.clamp(1e-6,1)
         VoH = VoH.clamp(1e-6,1)
+        D = self.GGX(NoH)                                             # [n][S][1]
         G = self.gsmith(rough, NoV, NoL)                              # [n][S][1]
         F0 = 0.04*(1-metal[:,None]) + metal[:,None]*base              # [n][3]
+        F0 = F0[:,None,:]                                             # [n][1][3]
         Fc = (1.0-VoH)**5                                             # [n][S][1]
-        F = (1.0-Fc)*F0[:,None,:]+Fc                                  # [n][S][3]
-        coef = F*G*VoH / (NoH*NoV).clamp(1e-6,1) # [n][S][3]
+        F = F0 + (1.0-F0)*Fc                                          # [n][S][3]
+        coef = F*G*VoH / (NoH*NoV).clamp(1e-6,1)                      # [n][S][3]
         coef = torch.where(mask, 0.0, coef)
+        pdf = D*NoH / (4.0*VoH)                                       # [n][S][1]
 
-        # compute mip levels
-        mip_levels = torch.zeros((n,S)).long().cuda()
+        # compute solid angles
+        cone_angles = (1.0 / (S*pdf)).squeeze()                       # [n][S]
 
-        return light, coef, mip_levels # [n][S][3], [n][S][3], [n][S]
+        return light, coef, cone_angles # [n][S][3], [n][S][3], [n][S]
 
 
 # util funtions
